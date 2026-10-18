@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "com.leica.lux"
+    namespace = "com.wetzlar.camera"
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "com.leica.lux"
+        applicationId = "com.wetzlar.camera"
         minSdk = 36
         targetSdk = 37
         versionCode = 1

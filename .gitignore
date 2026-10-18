@@ -1,0 +1,6 @@
+# Local reference material is not part of the Android app source.
+/network/
+/extracted_assets/
+/*_1121_iphone/
+/*_ANDROID_BLUEPRINT.md
+/convert_assets.py

@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "com.leica.lux.blegrip"
+    namespace = "com.wetzlar.camera.blegrip"
     compileSdk = 37
 
     defaultConfig {

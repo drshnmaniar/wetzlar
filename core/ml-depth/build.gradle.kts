@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "com.leica.lux.mldepth"
+    namespace = "com.wetzlar.camera.mldepth"
     compileSdk = 37
 
     defaultConfig {

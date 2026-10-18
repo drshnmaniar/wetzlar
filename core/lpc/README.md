@@ -6,7 +6,7 @@ apply the transform and decide how to crop or fill the expanded corners. `LpcOri
 uses Android's fused rotation-vector sensor when present and must be started/stopped with the
 camera preview.
 
-This is a geometric prototype, not a calibrated Leica correction profile. It does not account for
+This is a geometric prototype, not a calibrated lens correction profile. It does not account for
 lens distortion, device-specific sensor alignment, optical stabilization, display-axis remapping,
 or camera intrinsics beyond the values supplied by the caller. The sensor is optional; callers
 should disable live correction when it is unavailable.

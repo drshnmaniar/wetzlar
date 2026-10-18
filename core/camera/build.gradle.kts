@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "com.leica.lux.camera"
+    namespace = "com.wetzlar.camera.camera"
     compileSdk = 37
 
     defaultConfig {

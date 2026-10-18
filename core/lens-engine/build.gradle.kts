@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "com.leica.lux.lensengine"
+    namespace = "com.wetzlar.camera.lensengine"
     compileSdk = 37
 
     defaultConfig {
