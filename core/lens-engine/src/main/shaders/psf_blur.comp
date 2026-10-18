@@ -1,0 +1,70 @@
+#version 320 es
+precision highp float;
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(binding = 0, rgba16f) readonly uniform highp image2D uInputImage;
+layout(binding = 1, r16f) readonly uniform highp image2D uDepthMap;
+layout(binding = 2, rgba16f) writeonly uniform highp image2D uOutputImage;
+layout(binding = 3) uniform sampler2D uPsfKernel;
+
+uniform float uFocusDepth;     // Calibrated metric distance of focus point
+uniform float uFocalLength;    // Lens focal length in mm (e.g. 50.0)
+uniform float uAperture;       // Simulated f-stop (e.g. 1.2)
+uniform float uMaxCocRadius;   // Maximum blur radius in pixels (e.g. 32.0)
+
+void main() {
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(uInputImage);
+
+    if (coord.x >= size.x || coord.y >= size.y) {
+        return;
+    }
+
+    vec4 centerColor = imageLoad(uInputImage, coord);
+    float depth = imageLoad(uDepthMap, coord).r;
+
+    // Thin lens Circle of Confusion calculation
+    // CoC = |depth - focusDepth| / depth * (f^2 / (N * (focusDepth - f)))
+    float coc = 0.0;
+    if (depth > 0.001 && uFocusDepth > 0.001) {
+        float f = uFocalLength / 1000.0; // convert to meters
+        float num = abs(depth - uFocusDepth);
+        float denom = depth * (uFocusDepth - f);
+        if (denom > 0.0001) {
+            coc = (num / denom) * ((f * f) / uAperture);
+        }
+    }
+
+    // Convert metric CoC to pixel radius
+    float radius = clamp(coc * 10000.0, 0.0, uMaxCocRadius);
+
+    if (radius < 0.5) {
+        imageStore(uOutputImage, coord, centerColor);
+        return;
+    }
+
+    vec4 accumColor = vec4(0.0);
+    float totalWeight = 0.0;
+    int kernelSamples = clamp(int(radius), 4, 16);
+
+    for (int y = -kernelSamples; y <= kernelSamples; y++) {
+        for (int x = -kernelSamples; x <= kernelSamples; x++) {
+            ivec2 sampleCoord = coord + ivec2(x, y);
+            if (sampleCoord.x >= 0 && sampleCoord.x < size.x &&
+                sampleCoord.y >= 0 && sampleCoord.y < size.y) {
+
+                // Normalize UV coord inside PSF aperture kernel
+                vec2 kernelUV = vec2(float(x) / radius * 0.5 + 0.5, float(y) / radius * 0.5 + 0.5);
+                float weight = texture(uPsfKernel, kernelUV).r;
+
+                vec4 c = imageLoad(uInputImage, sampleCoord);
+                accumColor += c * weight;
+                totalWeight += weight;
+            }
+        }
+    }
+
+    vec4 finalColor = (totalWeight > 0.001) ? (accumColor / totalWeight) : centerColor;
+    imageStore(uOutputImage, coord, finalColor);
+}

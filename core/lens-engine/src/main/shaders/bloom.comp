@@ -1,0 +1,42 @@
+#version 320 es
+precision highp float;
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(binding = 0, rgba16f) readonly uniform highp image2D uInputImage;
+layout(binding = 1, rgba16f) writeonly uniform highp image2D uOutputImage;
+
+uniform float uBloomThreshold; // e.g. 0.85
+uniform float uBloomIntensity; // e.g. 0.35
+
+void main() {
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(uInputImage);
+
+    if (coord.x >= size.x || coord.y >= size.y) {
+        return;
+    }
+
+    vec4 color = imageLoad(uInputImage, coord);
+
+    // Multi-tap small specular blur kernel
+    vec3 bloomAccum = vec3(0.0);
+    float weights = 0.0;
+    int r = 6;
+
+    for (int y = -r; y <= r; y += 2) {
+        for (int x = -r; x <= r; x += 2) {
+            ivec2 sCoord = clamp(coord + ivec2(x, y), ivec2(0), size - ivec2(1));
+            vec3 c = imageLoad(uInputImage, sCoord).rgb;
+            float luma = dot(c, vec3(0.299, 0.587, 0.114));
+            if (luma > uBloomThreshold) {
+                float w = (luma - uBloomThreshold) / (1.0 - uBloomThreshold);
+                bloomAccum += c * w;
+                weights += w;
+            }
+        }
+    }
+
+    vec3 bloom = (weights > 0.0) ? (bloomAccum / weights * uBloomIntensity) : vec3(0.0);
+    imageStore(uOutputImage, coord, vec4(color.rgb + bloom, color.a));
+}

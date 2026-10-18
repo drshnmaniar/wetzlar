@@ -1,0 +1,28 @@
+#version 320 es
+precision highp float;
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(binding = 0, rgba16f) readonly uniform highp image2D uInputImage;
+layout(binding = 1, rgba16f) writeonly uniform highp image2D uOutputImage;
+layout(binding = 2) uniform sampler2D uLspTexture; // Lens Shading Profile map
+
+uniform float uShadingIntensity; // Default 1.0
+
+void main() {
+    ivec2 coord = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(uInputImage);
+
+    if (coord.x >= size.x || coord.y >= size.y) {
+        return;
+    }
+
+    vec4 color = imageLoad(uInputImage, coord);
+    vec2 uv = (vec2(coord) + 0.5) / vec2(size);
+
+    // Sample the radial lens shading falloff
+    float shading = texture(uLspTexture, uv).r;
+    float factor = mix(1.0, shading, uShadingIntensity);
+
+    imageStore(uOutputImage, coord, vec4(color.rgb * factor, color.a));
+}
