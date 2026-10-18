@@ -20,7 +20,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "leica-lux-android"
+rootProject.name = "wetzlar"
 
 include(":app")
 include(":core:camera")

@@ -8,7 +8,7 @@
 
     <application
         android:allowBackup="false"
-        android:label="Leica LUX"
+        android:label="Wetzlar"
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
         <activity

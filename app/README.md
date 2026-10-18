@@ -1,4 +1,4 @@
-# Leica LUX Android app
+# Wetzlar Android app
 
 ## Android API and build tool targets
 
