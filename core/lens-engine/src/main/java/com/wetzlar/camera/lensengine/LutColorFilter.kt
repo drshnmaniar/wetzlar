@@ -8,6 +8,7 @@ import java.io.InputStreamReader
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
+import java.util.StringTokenizer
 
 /** Parsed 3D .cube LUT. The sample order follows the .cube convention: red varies fastest. */
 class LutColorFilter private constructor(
@@ -96,28 +97,33 @@ class LutColorFilter private constructor(
                 lines.forEachIndexed { lineIndex, original ->
                     val line = original.substringBefore('#').trim()
                     if (line.isEmpty()) return@forEachIndexed
-                    val parts = line.split(Regex("\\s+"))
-                    when (parts[0].uppercase()) {
-                        "TITLE" -> Unit
-                        "LUT_1D_SIZE" -> error("1D LUTs are not supported; provide LUT_3D_SIZE")
-                        "LUT_3D_SIZE" -> {
-                            require(parts.size == 2) { "Invalid LUT_3D_SIZE at line ${lineIndex + 1}" }
-                            size = parts[1].toInt().also {
-                                require(it in MIN_LUT_SIZE..MAX_LUT_SIZE) { "Unsupported LUT size $it" }
+                    val tokens = StringTokenizer(line)
+                    val first = tokens.nextToken()
+                    if (first.first().isLetter()) {
+                        when (first.uppercase()) {
+                            "TITLE" -> Unit
+                            "LUT_1D_SIZE" -> error("1D LUTs are not supported; provide LUT_3D_SIZE")
+                            "LUT_3D_SIZE" -> {
+                                require(tokens.countTokens() == 1) { "Invalid LUT_3D_SIZE at line ${lineIndex + 1}" }
+                                size = tokens.nextToken().toInt().also {
+                                    require(it in MIN_LUT_SIZE..MAX_LUT_SIZE) { "Unsupported LUT size $it" }
+                                }
+                                values = FloatArray(requireNotNull(size) * requireNotNull(size) * requireNotNull(size) * 3)
                             }
-                            values = FloatArray(requireNotNull(size) * requireNotNull(size) * requireNotNull(size) * 3)
+                            "DOMAIN_MIN", "DOMAIN_MAX" -> {
+                                require(tokens.countTokens() == 3) { "Invalid $first at line ${lineIndex + 1}" }
+                                val target = if (first.equals("DOMAIN_MIN", true)) domainMin else domainMax
+                                for (channel in 0..2) target[channel] = tokens.nextToken().toFloat()
+                            }
+                            else -> error("Unsupported LUT directive '$first' at line ${lineIndex + 1}")
                         }
-                        "DOMAIN_MIN", "DOMAIN_MAX" -> {
-                            require(parts.size == 4) { "Invalid ${parts[0]} at line ${lineIndex + 1}" }
-                            val target = if (parts[0].equals("DOMAIN_MIN", true)) domainMin else domainMax
-                            for (channel in 0..2) target[channel] = parts[channel + 1].toFloat()
-                        }
-                        else -> {
-                            require(parts.size == 3) { "Invalid RGB sample at line ${lineIndex + 1}" }
-                            require(size != null) { "LUT_3D_SIZE must appear before RGB samples" }
-                            require(valueCount + 3 <= values.size) { "Too many LUT samples" }
-                            parts.forEach { values[valueCount++] = it.toFloat() }
-                        }
+                    } else {
+                        require(tokens.countTokens() == 2) { "Invalid RGB sample at line ${lineIndex + 1}" }
+                        require(size != null) { "LUT_3D_SIZE must appear before RGB samples" }
+                        require(valueCount + 3 <= values.size) { "Too many LUT samples" }
+                        values[valueCount++] = first.toFloat()
+                        values[valueCount++] = tokens.nextToken().toFloat()
+                        values[valueCount++] = tokens.nextToken().toFloat()
                     }
                 }
             }

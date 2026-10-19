@@ -4,6 +4,7 @@ import android.content.Context
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CaptureRequest
 import android.util.Range
+import android.view.Surface
 import androidx.camera.camera2.interop.Camera2CameraControl
 import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.camera2.interop.CaptureRequestOptions
@@ -18,6 +19,7 @@ import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import java.io.File
+import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.roundToInt
@@ -48,13 +50,19 @@ class CameraXController(context: Context) {
         lifecycleOwner: LifecycleOwner,
         previewView: PreviewView,
         lensFacing: Int = CameraSelector.LENS_FACING_BACK,
-    ) = bind(lifecycleOwner, previewView.surfaceProvider, lensFacing)
+    ) = bind(
+        lifecycleOwner,
+        previewView.surfaceProvider,
+        lensFacing,
+        previewView.display?.rotation ?: Surface.ROTATION_0,
+    )
 
     /** Binds CameraX preview frames to a custom target such as a SurfaceTexture-backed GL view. */
     fun bind(
         lifecycleOwner: LifecycleOwner,
         surfaceProvider: Preview.SurfaceProvider,
         lensFacing: Int = CameraSelector.LENS_FACING_BACK,
+        targetRotation: Int = Surface.ROTATION_0,
     ) {
         disposed.set(false)
         _state.value = CameraSessionState.Binding
@@ -70,11 +78,14 @@ class CameraXController(context: Context) {
                     cameraProvider.unbind(oldPreview, oldCapture)
                 }
                 val selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
-                val preview = Preview.Builder().build().also {
-                    it.setSurfaceProvider(mainExecutor, surfaceProvider)
-                }
+                val preview = Preview.Builder()
+                    .setTargetRotation(targetRotation)
+                    .build().also {
+                        it.setSurfaceProvider(mainExecutor, surfaceProvider)
+                    }
                 val capture = ImageCapture.Builder()
                     .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                    .setTargetRotation(targetRotation)
                     .build()
                 val camera = cameraProvider.bindToLifecycle(lifecycleOwner, selector, preview, capture)
                 boundPreview = preview
@@ -113,6 +124,33 @@ class CameraXController(context: Context) {
                 callback(CaptureResult.Failure(exception.message ?: "Image capture failed", exception))
             }
         })
+    }
+
+    /** Applies a digital zoom approximating a 35 mm-equivalent focal-length selection. */
+    fun setLensFocalLength(focalLengthMm: Int, callback: (Throwable?) -> Unit) {
+        val camera = boundCamera
+        val zoomState = camera?.cameraInfo?.zoomState?.value
+        if (camera == null || zoomState == null) {
+            callback(IllegalStateException("Camera zoom is not ready"))
+            return
+        }
+        val ratio = (focalLengthMm / 35f).coerceIn(zoomState.minZoomRatio, zoomState.maxZoomRatio)
+        val zoomFuture = camera.cameraControl.setZoomRatio(ratio)
+        zoomFuture.addListener(
+            {
+                callback(
+                    try {
+                        zoomFuture.get()
+                        null
+                    } catch (error: ExecutionException) {
+                        error.cause ?: error
+                    } catch (error: Exception) {
+                        error
+                    },
+                )
+            },
+            mainExecutor,
+        )
     }
 
     /**

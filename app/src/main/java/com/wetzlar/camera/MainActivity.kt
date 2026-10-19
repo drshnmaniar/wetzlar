@@ -5,6 +5,7 @@ import android.os.Bundle
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import android.util.LruCache
 import android.media.MediaScannerConnection
 import androidx.activity.ComponentActivity
 import androidx.activity.enableEdgeToEdge
@@ -16,12 +17,14 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -124,15 +127,24 @@ private fun WetzlarCameraApp() {
     var previewView by remember { mutableStateOf<GLCameraView?>(null) }
     var cameraStatus by remember { mutableStateOf<String?>(null) }
     var manualControlStatus by remember { mutableStateOf<String?>(null) }
+    var lensStatus by remember { mutableStateOf<String?>(null) }
     var lutStatus by remember { mutableStateOf<String?>(null) }
     var loadedLut by remember { mutableStateOf<LutColorFilter?>(null) }
+    var loadedLook by remember { mutableStateOf<WetzlarLook?>(null) }
+    val lutCache = remember(context) { LruCache<String, LutColorFilter>(2) }
+    val pendingLookCaptureMessage = "Loading ${selectedLook.title} look… Please try again in a moment."
     var diagnostics by remember { mutableStateOf<String?>(null) }
     var depthTestRunning by remember { mutableStateOf(false) }
 
     LaunchedEffect(hasCameraPermission, previewView, cameraController) {
         if (hasCameraPermission && previewView != null) {
             cameraStatus = null
-            cameraController.bind(lifecycleOwner, previewView!!.previewSurfaceProvider)
+            val glView = previewView!!
+            cameraController.bind(
+                lifecycleOwner,
+                glView.previewSurfaceProvider,
+                targetRotation = glView.display?.rotation ?: android.view.Surface.ROTATION_0,
+            )
         } else {
             cameraController.unbind()
         }
@@ -163,21 +175,44 @@ private fun WetzlarCameraApp() {
 
     LaunchedEffect(previewView, selectedLook) {
         val glView = previewView ?: return@LaunchedEffect
+        lutCache.get(selectedLook.id)?.let { filter ->
+            loadedLut = filter
+            loadedLook = selectedLook
+            glView.setLut(filter, selectedLook.defaultIntensity)
+            lutStatus = null
+            if (cameraStatus?.startsWith("Loading ") == true) cameraStatus = null
+            return@LaunchedEffect
+        }
+        if (cameraStatus?.startsWith("Loading ") == true) cameraStatus = null
         lutStatus = "Loading ${selectedLook.title} look…"
-        loadedLut = null
         val loaded = withContext(Dispatchers.IO) {
             runCatching {
                 context.assets.open("luts/${selectedLook.lutFileName}").use(LutColorFilter::parseCube)
             }
         }
         loaded.onSuccess { filter ->
+            lutCache.put(selectedLook.id, filter)
             loadedLut = filter
+            loadedLook = selectedLook
             glView.setLut(filter, selectedLook.defaultIntensity)
             lutStatus = null
+            if (cameraStatus?.startsWith("Loading ") == true) cameraStatus = null
         }.onFailure { error ->
             loadedLut = null
+            loadedLook = null
             glView.setLut(LutColorFilter.identity(), 0f)
             lutStatus = "Could not load look: ${error.localizedMessage ?: "invalid LUT"}"
+            if (cameraStatus?.startsWith("Loading ") == true) cameraStatus = null
+        }
+    }
+
+    LaunchedEffect(selectedLens, cameraSession, cameraController) {
+        if (cameraSession is CameraSessionState.Ready) {
+            cameraController.setLensFocalLength(selectedLens.focalLengthMm) { error ->
+                lensStatus = error?.let {
+                    "Lens zoom failed: ${it.localizedMessage ?: it.javaClass.simpleName}"
+                }
+            }
         }
     }
 
@@ -221,18 +256,26 @@ private fun WetzlarCameraApp() {
                         .getOrElse { "DEPTH16 failed: ${it.javaClass.simpleName}: ${it.localizedMessage}" }
                 }
                 diagnostics = (diagnostics.orEmpty() + "\n\nSTREAM TEST\n" + depthResult)
-                cameraController.bind(lifecycleOwner, glView.previewSurfaceProvider)
+                cameraController.bind(
+                    lifecycleOwner,
+                    glView.previewSurfaceProvider,
+                    targetRotation = glView.display?.rotation ?: android.view.Surface.ROTATION_0,
+                )
                 depthTestRunning = false
             }
         }
     }
 
     val capturePhoto: () -> Unit = {
-        if (cameraSession !is CameraSessionState.Ready) {
+        if (loadedLook != selectedLook) {
+            cameraStatus = pendingLookCaptureMessage
+        } else if (cameraSession !is CameraSessionState.Ready) {
             cameraStatus = "Camera is not ready yet."
         } else {
             val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
             val captureFile = File(context.cacheDir, "WETZLAR_$timestamp.jpg")
+            val captureLook = selectedLook
+            val captureLut = loadedLut
             cameraStatus = "Capturing…"
             cameraController.capture(captureFile) { result ->
                 when (result) {
@@ -241,8 +284,7 @@ private fun WetzlarCameraApp() {
                         cameraStatus = "Capture failed: ${result.message}"
                     }
                     is CaptureResult.Saved -> {
-                        val captureLut = loadedLut
-                        val captureIntensity = selectedLook.defaultIntensity
+                        val captureIntensity = captureLook.defaultIntensity
                         cameraStatus = if (captureLut == null) "Saving photo without the selected look…" else "Applying look and saving…"
                         coroutineScope.launch {
                             try {
@@ -291,80 +333,92 @@ private fun WetzlarCameraApp() {
     }
 
     Surface(modifier = Modifier.fillMaxSize(), color = ScreenBlack) {
-        Column(
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
                 .windowInsetsPadding(WindowInsets.safeDrawing)
-                .padding(horizontal = 20.dp, vertical = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+                .padding(horizontal = 20.dp, vertical = 10.dp)
         ) {
-            Header(onDiagnostics = showDiagnostics)
-            CameraViewfinder(
-                lens = selectedLens,
-                look = selectedLook,
-                hasPermission = hasCameraPermission,
-                status = cameraStatus ?: (cameraSession as? CameraSessionState.Error)?.message
-                    ?: manualControlStatus ?: cameraPermissionMessage ?: lutStatus,
-                isStarting = hasCameraPermission && cameraSession is CameraSessionState.Binding,
-                onPermissionRequest = { permissionLauncher.launch(android.Manifest.permission.CAMERA) },
-                onPreviewViewCreated = { previewView = it }
-            )
-
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                SectionTitle("LENS")
-                ChoiceRow(
-                    items = WetzlarLens.entries,
-                    selected = selectedLens,
-                    label = { "${it.focalLengthMm} mm" },
-                    onSelected = {
-                        selectedLens = it
+            val isLandscape = maxWidth > maxHeight
+            val viewfinderHeight = (maxHeight * if (isLandscape) 0.72f else 0.30f)
+                .coerceIn(140.dp, 280.dp)
+            Column(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Header(onDiagnostics = showDiagnostics)
+                if (isLandscape) {
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        CameraViewfinder(
+                            lens = selectedLens,
+                            look = selectedLook,
+                            hasPermission = hasCameraPermission,
+                            status = cameraStatus ?: (cameraSession as? CameraSessionState.Error)?.message
+                                ?: lensStatus ?: manualControlStatus ?: cameraPermissionMessage ?: lutStatus,
+                            isStarting = hasCameraPermission && cameraSession is CameraSessionState.Binding,
+                            onPermissionRequest = { permissionLauncher.launch(android.Manifest.permission.CAMERA) },
+                            onPreviewViewCreated = { previewView = it },
+                            modifier = Modifier.weight(1f).fillMaxHeight()
+                        )
+                        Column(
+                            modifier = Modifier.weight(1f).fillMaxHeight(),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            CameraControls(
+                                modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()),
+                                selectedLens = selectedLens,
+                                onLensSelected = { selectedLens = it },
+                                selectedAperture = selectedAperture,
+                                onApertureSelected = { selectedAperture = it },
+                                selectedLook = selectedLook,
+                                onLookSelected = { selectedLook = it },
+                                settings = settings,
+                                onSettingsChanged = {
+                                    settings = it
+                                    cameraStatus = null
+                                }
+                            )
+                            ShutterButton(
+                                enabled = hasCameraPermission && cameraSession is CameraSessionState.Ready,
+                                onClick = requestCapture
+                            )
+                        }
                     }
-                )
-                Text(
-                    text = selectedLens.title,
-                    color = MutedText,
-                    fontSize = 12.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                } else {
+                    CameraViewfinder(
+                        lens = selectedLens,
+                        look = selectedLook,
+                        hasPermission = hasCameraPermission,
+                        status = cameraStatus ?: (cameraSession as? CameraSessionState.Error)?.message
+                            ?: lensStatus ?: manualControlStatus ?: cameraPermissionMessage ?: lutStatus,
+                        isStarting = hasCameraPermission && cameraSession is CameraSessionState.Binding,
+                        onPermissionRequest = { permissionLauncher.launch(android.Manifest.permission.CAMERA) },
+                        onPreviewViewCreated = { previewView = it },
+                        modifier = Modifier.fillMaxWidth().height(viewfinderHeight)
+                    )
+                    CameraControls(
+                        modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()),
+                        selectedLens = selectedLens,
+                        onLensSelected = { selectedLens = it },
+                        selectedAperture = selectedAperture,
+                        onApertureSelected = { selectedAperture = it },
+                        selectedLook = selectedLook,
+                        onLookSelected = { selectedLook = it },
+                        settings = settings,
+                        onSettingsChanged = {
+                            settings = it
+                            cameraStatus = null
+                        }
+                    )
+                    ShutterButton(
+                        enabled = hasCameraPermission && cameraSession is CameraSessionState.Ready,
+                        onClick = requestCapture
+                    )
+                }
             }
-
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                SectionTitle("APERTURE")
-                ChoiceRow(
-                    items = SimulatedApertures,
-                    selected = selectedAperture,
-                    label = { value -> "f/${String.format(Locale.US, "%.1f", value).removeSuffix(".0")}" },
-                    onSelected = { selectedAperture = it },
-                )
-                Text(
-                    text = "DISPLAY ONLY · NO PHONE IRIS OR DEPTH BLUR IS WIRED YET",
-                    color = MutedText,
-                    fontSize = 9.sp,
-                    letterSpacing = 0.7.sp,
-                )
-            }
-
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                SectionTitle("LOOK")
-                ChoiceRow(
-                    items = WetzlarLook.entries.filterNot { it.isPaid },
-                    selected = selectedLook,
-                    label = { it.abbreviatedTitle },
-                    onSelected = { selectedLook = it }
-                )
-            }
-
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                SectionTitle("EXPOSURE")
-                ExposureControls(settings = settings, onSettingsChanged = {
-                    settings = it
-                    cameraStatus = null
-                })
-            }
-
-            Spacer(modifier = Modifier.weight(1f))
-            ShutterButton(enabled = hasCameraPermission && cameraSession is CameraSessionState.Ready, onClick = requestCapture)
         }
     }
     diagnostics?.let { report ->
@@ -468,12 +522,12 @@ private fun CameraViewfinder(
     status: String?,
     isStarting: Boolean,
     onPermissionRequest: () -> Unit,
-    onPreviewViewCreated: (GLCameraView) -> Unit
+    onPreviewViewCreated: (GLCameraView) -> Unit,
+    modifier: Modifier = Modifier
 ) {
     Box(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
-            .height(280.dp)
             .clip(RoundedCornerShape(18.dp))
             .background(
                 Brush.verticalGradient(
@@ -491,7 +545,7 @@ private fun CameraViewfinder(
                 update = { onPreviewViewCreated(it) }
             )
         }
-        Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = if (hasPermission && status == null) 0.10f else 0.62f)))
+        Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = if (hasPermission) 0.10f else 0.62f)))
         // Camera framing marks remain visible above the live preview.
         Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceBetween) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -529,6 +583,59 @@ private fun CameraViewfinder(
             HudPill(look.abbreviatedTitle)
         }
         Text("AUTO", modifier = Modifier.align(Alignment.BottomEnd), color = Color.White, fontSize = 11.sp, letterSpacing = 1.sp)
+    }
+}
+
+@Composable
+private fun CameraControls(
+    modifier: Modifier,
+    selectedLens: WetzlarLens,
+    onLensSelected: (WetzlarLens) -> Unit,
+    selectedAperture: Float,
+    onApertureSelected: (Float) -> Unit,
+    selectedLook: WetzlarLook,
+    onLookSelected: (WetzlarLook) -> Unit,
+    settings: ManualSettings,
+    onSettingsChanged: (ManualSettings) -> Unit
+) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            SectionTitle("LENS · DIGITAL FOCAL-LENGTH EQUIVALENT")
+            ChoiceRow(
+                items = WetzlarLens.entries.filterNot { it.isPaid },
+                selected = selectedLens,
+                label = { "${it.focalLengthMm} mm" },
+                onSelected = onLensSelected
+            )
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            SectionTitle("APERTURE")
+            ChoiceRow(
+                items = SimulatedApertures,
+                selected = selectedAperture,
+                label = { value -> "f/${String.format(Locale.US, "%.1f", value).removeSuffix(".0")}" },
+                onSelected = onApertureSelected
+            )
+            Text(
+                text = "DISPLAY ONLY · NO PHONE IRIS OR DEPTH BLUR IS WIRED YET",
+                color = MutedText,
+                fontSize = 9.sp,
+                letterSpacing = 0.7.sp
+            )
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            SectionTitle("LOOK")
+            ChoiceRow(
+                items = WetzlarLook.entries.filterNot { it.isPaid },
+                selected = selectedLook,
+                label = { it.abbreviatedTitle },
+                onSelected = onLookSelected
+            )
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            SectionTitle("EXPOSURE")
+            ExposureControls(settings = settings, onSettingsChanged = onSettingsChanged)
+        }
     }
 }
 

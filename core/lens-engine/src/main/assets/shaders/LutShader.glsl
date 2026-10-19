@@ -2,8 +2,8 @@
 #extension GL_OES_EGL_image_external_essl3 : require
 precision highp float;
 
-uniform samplerExternalOES uCameraTexture;
-uniform sampler3D uLutTexture;
+uniform highp samplerExternalOES uCameraTexture;
+uniform highp sampler3D uLutTexture;
 uniform mat4 uTextureTransform;
 uniform vec4 uCropRect;
 uniform int uRotationDegrees;
