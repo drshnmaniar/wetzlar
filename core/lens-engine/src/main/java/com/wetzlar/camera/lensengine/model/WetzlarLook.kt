@@ -139,13 +139,4 @@ enum class ColorFilter(val id: String, val title: String, val rgbWeight: FloatAr
     RED("red", "Red", floatArrayOf(1.8f, 0.4f, 0.1f)),
     GREEN("green", "Green", floatArrayOf(0.4f, 1.5f, 0.4f)),
     BLUE("blue", "Blue", floatArrayOf(0.3f, 0.5f, 1.6f));
-
-    override fun equals(other: Any?): Boolean {
-        if (this === other) return true
-        if (javaClass != other?.javaClass) return false
-        other as ColorFilter
-        return id == other.id
-    }
-
-    override fun hashCode(): Int = id.hashCode()
 }

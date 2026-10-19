@@ -30,7 +30,7 @@ import kotlinx.coroutines.flow.asStateFlow
  * Binding and image saving complete asynchronously and are reflected through [state].
  * Call [unbind] from the owning screen's disposal callback.
  */
-@OptIn(ExperimentalCamera2Interop::class)
+@androidx.annotation.OptIn(markerClass = [ExperimentalCamera2Interop::class])
 class CameraXController(context: Context) {
     private val appContext = context.applicationContext
     private val mainExecutor: Executor = ContextCompat.getMainExecutor(appContext)
@@ -131,7 +131,7 @@ class CameraXController(context: Context) {
 
         val evRange = camera.cameraInfo.exposureState.exposureCompensationRange
         val evStep = camera.cameraInfo.exposureState.exposureCompensationStep
-        if (evRange != null && evStep.toFloat() > 0f) {
+        if (evStep.toFloat() > 0f) {
             val index = (settings.exposureCompensationEv / evStep.toFloat()).roundToInt()
                 .coerceIn(evRange.lower, evRange.upper)
             camera.cameraControl.setExposureCompensationIndex(index)

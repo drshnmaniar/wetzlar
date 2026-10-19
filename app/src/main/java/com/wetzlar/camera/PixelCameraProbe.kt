@@ -1,10 +1,13 @@
 package com.wetzlar.camera
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.graphics.SurfaceTexture
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.os.Build
+import androidx.core.content.ContextCompat
 import com.wetzlar.camera.camera.Camera2DepthReader
 import java.util.Locale
 import kotlinx.coroutines.CompletableDeferred
@@ -13,6 +16,10 @@ import kotlinx.coroutines.withTimeoutOrNull
 /** Runtime report for validating camera and GL capabilities on physical test devices. */
 object PixelCameraProbe {
     suspend fun testDepthStream(context: Context): String {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            return "Camera permission is not granted."
+        }
+
         val result = CompletableDeferred<String>()
         val reader = Camera2DepthReader(
             context = context,
@@ -48,6 +55,10 @@ object PixelCameraProbe {
     }
 
     fun collect(context: Context, glInfo: String): String {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            return "Camera permission is not granted."
+        }
+
         val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
         val depthReader = Camera2DepthReader(context, onFrame = {})
         val depthById = depthReader.queryDepthSupport().associateBy { it.cameraId }

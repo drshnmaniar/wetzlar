@@ -4,3 +4,12 @@
 /*_1121_iphone/
 /*_ANDROID_BLUEPRINT.md
 /convert_assets.py
+
+# Android/Gradle generated files and machine-local configuration.
+.gradle/
+**/build/
+/local.properties
+.idea/
+*.iml
+.externalNativeBuild/
+.cxx/
